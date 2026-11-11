@@ -1,0 +1,22 @@
+#!/system/bin/sh
+rd(){ R=""; [ -r "$1" ] && { read -r R < "$1"; } 2>/dev/null; }
+printf 'Content-Type: application/json\r\nCache-Control: no-store\r\nAccess-Control-Allow-Origin: *\r\n\r\n'
+rd /proc/loadavg; LA=$R
+ST=$(sed -n 's/^\(cpu[0-9]* .*$\)/"\1",/p' /proc/stat | tr -d '\n'); ST=${ST%,}
+P=""
+for p in /sys/devices/system/cpu/cpufreq/policy*; do [ -d "$p" ] || continue; rd "$p/affected_cpus"; a=$R; rd "$p/scaling_cur_freq"; c=$R; rd "$p/cpuinfo_min_freq"; mn=$R; rd "$p/cpuinfo_max_freq"; mx=$R; rd "$p/scaling_min_freq"; sn=$R; rd "$p/scaling_max_freq"; sx=$R; rd "$p/scaling_governor"; g=$R; P="$P{\"id\":\"${p##*policy}\",\"cpus\":\"$a\",\"cur\":\"$c\",\"min\":\"$mn\",\"max\":\"$mx\",\"smin\":\"$sn\",\"smax\":\"$sx\",\"gov\":\"$g\"},"; done
+T=""
+for z in /sys/class/thermal/thermal_zone*; do rd "$z/temp"; t=$R; [ -n "$t" ] || continue; rd "$z/type"; typ=$(echo "$R"|tr -cd 'A-Za-z0-9_.-'); T="$T{\"t\":\"$typ\",\"v\":\"$t\"},"; done
+B=/sys/class/power_supply/battery; rd "$B/temp"; bt=$R; rd "$B/capacity"; bc=$R; rd "$B/status"; bs=$R; rd "$B/current_now"; cur=$R; rd "$B/voltage_now"; volt=$R
+mw=$(awk -v c="$cur" -v v="$volt" 'BEGIN{if(c<0)c=-c;if(v<0)v=-v;printf "%.3f",c*v/1000000000000}')
+G=""
+for f in /proc/mtk_mali/gpu_utilization /sys/kernel/ged/hal/gpu_utilization /sys/kernel/ged/hal/current_freqency /sys/module/ged/parameters/gpu_loading; do [ -r "$f" ] || continue; rd "$f"; val=$(echo "$R"|tr -cd 'A-Za-z0-9_.,:=% -'); G="$G{\"k\":\"$f\",\"v\":\"$val\"},"; done
+GF=$(sed -n 's/.*Index: *\([0-9]*\), *Freq: *\([0-9]*\).*/\1 \2/p' /proc/gpufreqv2/gpufreq_status 2>/dev/null|head -n 1); [ -n "$GF" ] && G="$G{\"k\":\"gpufreqv2\",\"v\":\"$GF\"},"
+V=""; for d in /sys/class/devfreq/*; do [ -r "$d/cur_freq" ] || continue; rd "$d/cur_freq"; c=$R; rd "$d/min_freq"; mn=$R; rd "$d/max_freq"; mx=$R; V="$V{\"n\":\"${d##*/}\",\"cur\":\"$c\",\"min\":\"$mn\",\"max\":\"$mx\"},"; done
+D=""; while read -r ma mi name reads rm rs rt writes wm ws wt inflight iotime weighted; do case "$name" in loop*|ram*|zram*) continue;; mmcblk*|sd[a-z]|nvme*n*|dm-*) D="$D{\"n\":\"$name\",\"r\":\"$rs\",\"w\":\"$ws\",\"busy\":\"$iotime\"},";; esac; done < /proc/diskstats
+SFP=$(pidof surfaceflinger 2>/dev/null|awk '{print $1}'); SFT=0; [ -n "$SFP" ] && SFT=$(awk '{print $14+$15}' "/proc/$SFP/stat" 2>/dev/null)
+FPS=""; command -v dumpsys >/dev/null 2>&1 && FPS=$(dumpsys SurfaceFlinger --latency 2>/dev/null|awk 'NR>1&&$3~/^[0-9]+$/&&$3>0{a[++n]=$3}END{if(n>1&&a[n]>a[1])printf "%.1f",(n-1)*1000000000/(a[n]-a[1])}')
+MAXT=0; H=/data/local/tmp/phone_monitor/temp30.log; [ -r "$H" ] && MAXT=$(awk -v now="$(date +%s)" '$1>=now-1800{for(i=2;i<=NF;i++)if($i>m)m=$i}END{if(m>0)printf "%d",m;else print 0}' "$H")
+DF=$(df -k /data 2>/dev/null|tail -n 1|awk '{gsub(/%/,"",$5);printf "{\"used\":\"%s\",\"avail\":\"%s\",\"pct\":\"%s\"}",$3,$4,$5}'); [ -n "$DF" ] || DF='{"used":"0","avail":"0","pct":"0"}'
+rd /proc/pressure/io; PSI=$(echo "$R"|tr -cd 'A-Za-z0-9_.= ')
+printf '{"load":"%s","stat":[%s],"pol":[%s],"th":[%s],"gpu":[%s],"dev":[%s],"disk":[%s],"bat":{"temp":"%s","cap":"%s","st":"%s","current":"%s","voltage":"%s","watts":"%s"},"sf":{"pid":"%s","ticks":"%s","fps":"%s"},"max30":"%s","storage":%s,"iopsi":"%s"}' "$LA" "$ST" "${P%,}" "${T%,}" "${G%,}" "${V%,}" "${D%,}" "$bt" "$bc" "$bs" "$cur" "$volt" "$mw" "$SFP" "$SFT" "$FPS" "$MAXT" "$DF" "$PSI"
