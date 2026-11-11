@@ -1,0 +1,12 @@
+# Diagnostics and logs
+*diag*.txt
+X6886_full_diagnostics.txt
+*.log
+
+# Release packages
+*.zip
+*.tar.gz
+
+# Temporary files
+/tmp/
+.DS_Store

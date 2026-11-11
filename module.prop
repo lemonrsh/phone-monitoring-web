@@ -1,6 +1,6 @@
 id=phone_monitor
-name=Phone Monitor Web - X6886
-version=v2.0
-versionCode=2
+name=Phone Monitor Web - Infinix X6886
+version=v2.5
+versionCode=25
 author=lemonrsh
-description=Single-screen power FPS SurfaceFlinger CPU thermals disk I/O and storage monitor.
+description=Real-time web diagnostics & hardware monitor for Infinix X6886 (MediaTek MT6789) - CPU octa-core load, Mali GPU, 120Hz FPS, thermals, battery power draw, RAM, storage, disk I/O and tasks.

@@ -1,22 +1,280 @@
 #!/system/bin/sh
-rd(){ R=""; [ -r "$1" ] && { read -r R < "$1"; } 2>/dev/null; }
+# Phone Monitor Web - Stats Collector for Infinix X6886 & Android Devices
+rd() { R=""; [ -r "$1" ] && { read -r R < "$1"; } 2>/dev/null; }
+
 printf 'Content-Type: application/json\r\nCache-Control: no-store\r\nAccess-Control-Allow-Origin: *\r\n\r\n'
+
+# 1. Device Info (cached for maximum performance)
+DEV_CACHE="/data/local/tmp/phone_monitor/device.json"
+DEV_JSON=""
+if [ -r "$DEV_CACHE" ]; then
+  rd "$DEV_CACHE"
+  DEV_JSON=$R
+fi
+if [ -z "$DEV_JSON" ]; then
+  m=$(getprop ro.product.model 2>/dev/null); [ -n "$m" ] || m="Infinix X6886"
+  b=$(getprop ro.product.brand 2>/dev/null); [ -n "$b" ] || b="Infinix"
+  soc=$(getprop ro.soc.model 2>/dev/null); [ -n "$soc" ] || soc=$(getprop ro.hardware 2>/dev/null); [ -n "$soc" ] || soc="MT6789"
+  andr=$(getprop ro.build.version.release 2>/dev/null); [ -n "$andr" ] || andr="17"
+  sdk=$(getprop ro.build.version.sdk 2>/dev/null); [ -n "$sdk" ] || sdk="37"
+  bid=$(getprop ro.build.display.id 2>/dev/null); [ -n "$bid" ] || bid="CP2A.260605.016"
+  DEV_JSON="{\"model\":\"$m\",\"brand\":\"$b\",\"soc\":\"$soc\",\"android\":\"$andr\",\"sdk\":\"$sdk\",\"build\":\"$bid\"}"
+  [ -d /data/local/tmp/phone_monitor ] && echo "$DEV_JSON" > "$DEV_CACHE" 2>/dev/null
+fi
+
+# 2. Uptime & Load Average
+UPTIME=$(awk '{printf "%.0f", $1}' /proc/uptime 2>/dev/null)
+[ -n "$UPTIME" ] || UPTIME=0
 rd /proc/loadavg; LA=$R
-ST=$(sed -n 's/^\(cpu[0-9]* .*$\)/"\1",/p' /proc/stat | tr -d '\n'); ST=${ST%,}
+[ -n "$LA" ] || LA="0.00 0.00 0.00"
+
+# 3. CPU Stats (/proc/stat: overall and per core)
+ST=$(sed -n 's/^\(cpu[0-9]* .*$\)/"\1",/p' /proc/stat 2>/dev/null | tr -d '\n')
+ST=${ST%,}
+
+# 4. CPU Policies & Frequencies
 P=""
-for p in /sys/devices/system/cpu/cpufreq/policy*; do [ -d "$p" ] || continue; rd "$p/affected_cpus"; a=$R; rd "$p/scaling_cur_freq"; c=$R; rd "$p/cpuinfo_min_freq"; mn=$R; rd "$p/cpuinfo_max_freq"; mx=$R; rd "$p/scaling_min_freq"; sn=$R; rd "$p/scaling_max_freq"; sx=$R; rd "$p/scaling_governor"; g=$R; P="$P{\"id\":\"${p##*policy}\",\"cpus\":\"$a\",\"cur\":\"$c\",\"min\":\"$mn\",\"max\":\"$mx\",\"smin\":\"$sn\",\"smax\":\"$sx\",\"gov\":\"$g\"},"; done
+for p in /sys/devices/system/cpu/cpufreq/policy*; do
+  [ -d "$p" ] || continue
+  rd "$p/affected_cpus"; a=$R
+  rd "$p/scaling_cur_freq"; c=$R
+  rd "$p/cpuinfo_min_freq"; mn=$R
+  rd "$p/cpuinfo_max_freq"; mx=$R
+  rd "$p/scaling_min_freq"; sn=$R
+  rd "$p/scaling_max_freq"; sx=$R
+  rd "$p/scaling_governor"; g=$R
+  P="$P{\"id\":\"${p##*policy}\",\"cpus\":\"$a\",\"cur\":\"$c\",\"min\":\"$mn\",\"max\":\"$mx\",\"smin\":\"$sn\",\"smax\":\"$sx\",\"gov\":\"$g\"},"
+done
+P=${P%,}
+
+# Individual CPU core current frequencies
+CORES=""
+for i in 0 1 2 3 4 5 6 7; do
+  cf=""
+  for f in /sys/devices/system/cpu/cpu$i/cpufreq/scaling_cur_freq /sys/devices/system/cpu/cpu$i/cpufreq/cpuinfo_cur_freq; do
+    if [ -r "$f" ]; then rd "$f"; cf=$R; [ -n "$cf" ] && break; fi
+  done
+  [ -n "$cf" ] && CORES="$CORES\"$cf\","
+done
+CORES=${CORES%,}
+
+# 5. Thermals (/sys/class/thermal/thermal_zone*)
 T=""
-for z in /sys/class/thermal/thermal_zone*; do rd "$z/temp"; t=$R; [ -n "$t" ] || continue; rd "$z/type"; typ=$(echo "$R"|tr -cd 'A-Za-z0-9_.-'); T="$T{\"t\":\"$typ\",\"v\":\"$t\"},"; done
-B=/sys/class/power_supply/battery; rd "$B/temp"; bt=$R; rd "$B/capacity"; bc=$R; rd "$B/status"; bs=$R; rd "$B/current_now"; cur=$R; rd "$B/voltage_now"; volt=$R
-mw=$(awk -v c="$cur" -v v="$volt" 'BEGIN{if(c<0)c=-c;if(v<0)v=-v;printf "%.3f",c*v/1000000000000}')
-G=""
-for f in /proc/mtk_mali/gpu_utilization /sys/kernel/ged/hal/gpu_utilization /sys/kernel/ged/hal/current_freqency /sys/module/ged/parameters/gpu_loading; do [ -r "$f" ] || continue; rd "$f"; val=$(echo "$R"|tr -cd 'A-Za-z0-9_.,:=% -'); G="$G{\"k\":\"$f\",\"v\":\"$val\"},"; done
-GF=$(sed -n 's/.*Index: *\([0-9]*\), *Freq: *\([0-9]*\).*/\1 \2/p' /proc/gpufreqv2/gpufreq_status 2>/dev/null|head -n 1); [ -n "$GF" ] && G="$G{\"k\":\"gpufreqv2\",\"v\":\"$GF\"},"
-V=""; for d in /sys/class/devfreq/*; do [ -r "$d/cur_freq" ] || continue; rd "$d/cur_freq"; c=$R; rd "$d/min_freq"; mn=$R; rd "$d/max_freq"; mx=$R; V="$V{\"n\":\"${d##*/}\",\"cur\":\"$c\",\"min\":\"$mn\",\"max\":\"$mx\"},"; done
-D=""; while read -r ma mi name reads rm rs rt writes wm ws wt inflight iotime weighted; do case "$name" in loop*|ram*|zram*) continue;; mmcblk*|sd[a-z]|nvme*n*|dm-*) D="$D{\"n\":\"$name\",\"r\":\"$rs\",\"w\":\"$ws\",\"busy\":\"$iotime\"},";; esac; done < /proc/diskstats
-SFP=$(pidof surfaceflinger 2>/dev/null|awk '{print $1}'); SFT=0; [ -n "$SFP" ] && SFT=$(awk '{print $14+$15}' "/proc/$SFP/stat" 2>/dev/null)
-FPS=""; command -v dumpsys >/dev/null 2>&1 && FPS=$(dumpsys SurfaceFlinger --latency 2>/dev/null|awk 'NR>1&&$3~/^[0-9]+$/&&$3>0{a[++n]=$3}END{if(n>1&&a[n]>a[1])printf "%.1f",(n-1)*1000000000/(a[n]-a[1])}')
-MAXT=0; H=/data/local/tmp/phone_monitor/temp30.log; [ -r "$H" ] && MAXT=$(awk -v now="$(date +%s)" '$1>=now-1800{for(i=2;i<=NF;i++)if($i>m)m=$i}END{if(m>0)printf "%d",m;else print 0}' "$H")
-DF=$(df -k /data 2>/dev/null|tail -n 1|awk '{gsub(/%/,"",$5);printf "{\"used\":\"%s\",\"avail\":\"%s\",\"pct\":\"%s\"}",$3,$4,$5}'); [ -n "$DF" ] || DF='{"used":"0","avail":"0","pct":"0"}'
-rd /proc/pressure/io; PSI=$(echo "$R"|tr -cd 'A-Za-z0-9_.= ')
-printf '{"load":"%s","stat":[%s],"pol":[%s],"th":[%s],"gpu":[%s],"dev":[%s],"disk":[%s],"bat":{"temp":"%s","cap":"%s","st":"%s","current":"%s","voltage":"%s","watts":"%s"},"sf":{"pid":"%s","ticks":"%s","fps":"%s"},"max30":"%s","storage":%s,"iopsi":"%s"}' "$LA" "$ST" "${P%,}" "${T%,}" "${G%,}" "${V%,}" "${D%,}" "$bt" "$bc" "$bs" "$cur" "$volt" "$mw" "$SFP" "$SFT" "$FPS" "$MAXT" "$DF" "$PSI"
+for z in /sys/class/thermal/thermal_zone*; do
+  [ -d "$z" ] || continue
+  rd "$z/temp"; t=$R
+  [ -n "$t" ] || continue
+  case "$t" in ''|*[!0-9-]*) continue;; esac
+  rd "$z/type"; typ=$(echo "$R" | tr -cd 'A-Za-z0-9_.-')
+  [ -n "$typ" ] || typ="${z##*/}"
+  T="$T{\"t\":\"$typ\",\"v\":\"$t\"},"
+done
+T=${T%,}
+
+# 6. Battery Subsystem (/sys/class/power_supply/battery/*)
+B=/sys/class/power_supply/battery
+rd "$B/temp"; bt=$R
+rd "$B/capacity"; bc=$R
+rd "$B/status"; bs=$R
+rd "$B/health"; bh=$R
+rd "$B/current_now"; cur=$R
+rd "$B/current_avg"; ca=$R
+rd "$B/voltage_now"; volt=$R
+rd "$B/cycle_count"; cyc=$R
+rd "$B/charge_full"; cfull=$R
+rd "$B/charge_full_design"; cdes=$R
+rd "$B/charge_counter"; ccnt=$R
+rd "$B/time_to_full_now"; ttf=$R
+rd "$B/technology"; tech=$R
+rd "$B/capacity_level"; clev=$R
+
+mw=$(awk -v c="$cur" -v v="$volt" 'BEGIN{if(c<0)c=-c;if(v<0)v=-v;if(c>0&&v>0)printf "%.3f",c*v/1000000000000;else print "0.000"}')
+
+# 7. GPU Subsystem (MediaTek MT6789 Mali-G57 & Universal Fallbacks)
+GPU_CUR="0"
+GPU_UTIL="0"
+GPU_VOLT="0"
+GPU_MEM="0"
+GPU_FPS="0"
+GPU_MIN="390000"
+GPU_MAX="1450000"
+
+# Check gpufreq_status (MediaTek gpufreqv2)
+if [ -r /proc/gpufreqv2/gpufreq_status ]; then
+  GF_STAT=$(sed -n 's/.*Index: *\([0-9]*\), *Freq: *\([0-9]*\), *Volt: *\([0-9]*\).*/\1 \2 \3/p' /proc/gpufreqv2/gpufreq_status 2>/dev/null | head -n 1)
+  if [ -n "$GF_STAT" ]; then
+    set -- $GF_STAT
+    [ -n "$2" ] && GPU_CUR="$2"
+    [ -n "$3" ] && GPU_VOLT="$3"
+  fi
+fi
+
+# Fallback current freq from /sys/kernel/ged/hal/current_freqency
+if [ "$GPU_CUR" = "0" ] || [ -z "$GPU_CUR" ]; then
+  if [ -r /sys/kernel/ged/hal/current_freqency ]; then
+    rd /sys/kernel/ged/hal/current_freqency
+    set -- $R
+    [ -n "$2" ] && GPU_CUR="$2"
+  fi
+fi
+
+# Fallback kgsl or generic devfreq gpu
+if [ "$GPU_CUR" = "0" ] || [ -z "$GPU_CUR" ]; then
+  for f in /sys/class/kgsl/kgsl-3d0/gpuclk /sys/class/kgsl/kgsl-3d0/devfreq/cur_freq; do
+    if [ -r "$f" ]; then rd "$f"; [ -n "$R" ] && GPU_CUR="$R" && break; fi
+  done
+fi
+
+# GPU Utilization
+if [ -r /sys/kernel/ged/hal/gpu_utilization ]; then
+  rd /sys/kernel/ged/hal/gpu_utilization
+  set -- $R
+  [ -n "$1" ] && GPU_UTIL="$1"
+fi
+if [ "$GPU_UTIL" = "0" ] && [ -r /proc/mtk_mali/gpu_utilization ]; then
+  u=$(sed -n 's/.*ACTIVE=\([0-9]*\).*/\1/p' /proc/mtk_mali/gpu_utilization 2>/dev/null)
+  [ -n "$u" ] && GPU_UTIL="$u"
+fi
+if [ "$GPU_UTIL" = "0" ] && [ -r /sys/module/ged/parameters/gpu_loading ]; then
+  rd /sys/module/ged/parameters/gpu_loading
+  [ -n "$R" ] && GPU_UTIL="$R"
+fi
+
+# GPU Memory
+if [ -r /proc/mtk_mali/gpu_memory ]; then
+  m=$(awk 'NR==1{print $2}' /proc/mtk_mali/gpu_memory 2>/dev/null)
+  [ -n "$m" ] && GPU_MEM="$m"
+fi
+
+# GPU FPS from GED
+if [ -r /sys/kernel/ged/hal/gpu_fps ]; then
+  rd /sys/kernel/ged/hal/gpu_fps
+  [ -n "$R" ] && GPU_FPS="$R"
+fi
+if [ "$GPU_FPS" = "0" ] && [ -r /sys/kernel/ged/hal/ged_kpi ]; then
+  kpi=$(cut -d',' -f1 /sys/kernel/ged/hal/ged_kpi 2>/dev/null)
+  [ -n "$kpi" ] && GPU_FPS="$kpi"
+fi
+
+# Raw GPU attributes for legacy/extra fields
+G_RAW=""
+for f in /proc/mtk_mali/gpu_utilization /sys/kernel/ged/hal/gpu_utilization /sys/kernel/ged/hal/current_freqency /sys/module/ged/parameters/gpu_loading /sys/kernel/ged/hal/gpu_fps /sys/kernel/ged/hal/ged_kpi; do
+  [ -r "$f" ] || continue
+  rd "$f"
+  val=$(echo "$R" | tr -cd 'A-Za-z0-9_.,:=% -')
+  G_RAW="$G_RAW{\"k\":\"$f\",\"v\":\"$val\"},"
+done
+G_RAW=${G_RAW%,}
+
+# 8. DEVFREQ (Memory Bus / MTK DVFSRC Clock)
+V=""
+for d in /sys/class/devfreq/*; do
+  [ -d "$d" ] || continue
+  rd "$d/cur_freq"; c=$R
+  [ -n "$c" ] || continue
+  rd "$d/min_freq"; mn=$R
+  rd "$d/max_freq"; mx=$R
+  rd "$d/governor"; g=$R
+  V="$V{\"n\":\"${d##*/}\",\"cur\":\"$c\",\"min\":\"$mn\",\"max\":\"$mx\",\"gov\":\"$g\"},"
+done
+V=${V%,}
+
+# 9. SurfaceFlinger, Display Hz & FPS
+SFP=$(pidof surfaceflinger 2>/dev/null | awk '{print $1}')
+SFT=0; [ -n "$SFP" ] && SFT=$(awk '{print $14+$15}' "/proc/$SFP/stat" 2>/dev/null)
+
+DISP_HZ=""
+SF_FPS=""
+
+if command -v dumpsys >/dev/null 2>&1; then
+  # Refresh period in nanoseconds (line 1 of SurfaceFlinger latency)
+  HZ_RAW=$(dumpsys SurfaceFlinger --latency 2>/dev/null | head -n 1)
+  if [ -n "$HZ_RAW" ] && [ "$HZ_RAW" -gt 0 ] 2>/dev/null; then
+    DISP_HZ=$(awk -v ns="$HZ_RAW" 'BEGIN{if(ns>0) printf "%.0f", 1000000000/ns}')
+  fi
+
+  # Active layer latency FPS
+  TOP_LAYER=$(dumpsys SurfaceFlinger --list 2>/dev/null | grep -E 'Task=|SurfaceView' | head -n 1)
+  if [ -n "$TOP_LAYER" ]; then
+    SF_FPS=$(dumpsys SurfaceFlinger --latency "$TOP_LAYER" 2>/dev/null | awk 'NR>1 && $2~/^[0-9]+$/ && $2>0 {a[++n]=$2} END {if(n>1 && a[n]>a[1]) printf "%.1f", (n-1)*1000000000/(a[n]-a[1])}')
+  fi
+fi
+
+# Fallback Display Hz from GED KPI if dumpsys was unavailable
+if [ -z "$DISP_HZ" ] && [ -r /sys/kernel/ged/hal/ged_kpi ]; then
+  DISP_HZ=$(cut -d',' -f1 /sys/kernel/ged/hal/ged_kpi 2>/dev/null)
+fi
+[ -n "$DISP_HZ" ] || DISP_HZ="120"
+
+# Fallback FPS from GPU_FPS or Display Hz
+if [ -z "$SF_FPS" ] || [ "$SF_FPS" = "0.0" ]; then
+  if [ -n "$GPU_FPS" ] && [ "$GPU_FPS" != "0" ]; then
+    SF_FPS="$GPU_FPS"
+  else
+    SF_FPS="$DISP_HZ.0"
+  fi
+fi
+
+# 10. Memory (/proc/meminfo)
+MEM=$(awk '
+/^MemTotal:/{t=$2}
+/^MemFree:/{f=$2}
+/^MemAvailable:/{a=$2}
+/^Buffers:/{b=$2}
+/^Cached:/{c=$2}
+/^SwapTotal:/{st=$2}
+/^SwapFree:/{sf=$2}
+END{
+  u = t - a;
+  su = st - sf;
+  printf "{\"total\":%s,\"avail\":%s,\"free\":%s,\"used\":%s,\"cached\":%s,\"buffers\":%s,\"swap_total\":%s,\"swap_used\":%s,\"swap_free\":%s}", (t?t:0), (a?a:0), (f?f:0), (u?u:0), (c?c:0), (b?b:0), (st?st:0), (su?su:0), (sf?sf:0)
+}' /proc/meminfo 2>/dev/null)
+[ -n "$MEM" ] || MEM='{"total":0,"avail":0,"free":0,"used":0,"cached":0,"buffers":0,"swap_total":0,"swap_used":0,"swap_free":0}'
+
+# 11. Storage (Data and Root)
+DF_DATA=$(df -k /data 2>/dev/null | tail -n 1 | awk '{gsub(/%/,"",$5); printf "{\"used\":\"%s\",\"avail\":\"%s\",\"pct\":\"%s\",\"total\":\"%s\"}", $3, $4, $5, $2}')
+[ -n "$DF_DATA" ] || DF_DATA='{"used":"0","avail":"0","pct":"0","total":"0"}'
+DF_ROOT=$(df -k / 2>/dev/null | tail -n 1 | awk '{gsub(/%/,"",$5); printf "{\"used\":\"%s\",\"avail\":\"%s\",\"pct\":\"%s\",\"total\":\"%s\"}", $3, $4, $5, $2}')
+[ -n "$DF_ROOT" ] || DF_ROOT='{"used":"0","avail":"0","pct":"0","total":"0"}'
+
+# 12. Disk I/O (/proc/diskstats)
+D=""
+while read -r ma mi name reads rm rs rt writes wm ws wt inflight iotime weighted; do
+  case "$name" in
+    loop*|ram*|zram*) continue;;
+    sd[a-z]|mmcblk[0-9]|nvme[0-9]n[0-9]|dm-[0-9]*)
+      if [ "$rs" != "0" ] || [ "$ws" != "0" ]; then
+        D="$D{\"n\":\"$name\",\"r\":\"$rs\",\"w\":\"$ws\",\"busy\":\"$iotime\"},"
+      fi
+      ;;
+  esac
+done < /proc/diskstats 2>/dev/null
+D=${D%,}
+
+# 13. Pressure Stall Information (PSI)
+PSI_IO=""; [ -r /proc/pressure/io ] && rd /proc/pressure/io && PSI_IO=$(echo "$R" | tr -cd 'A-Za-z0-9_.= ')
+PSI_CPU=""; [ -r /proc/pressure/cpu ] && rd /proc/pressure/cpu && PSI_CPU=$(echo "$R" | tr -cd 'A-Za-z0-9_.= ')
+PSI_MEM=""; [ -r /proc/pressure/memory ] && rd /proc/pressure/memory && PSI_MEM=$(echo "$R" | tr -cd 'A-Za-z0-9_.= ')
+
+# 14. Rolling 30-minute Max Thermal
+MAXT=0
+H=/data/local/tmp/phone_monitor/temp30.log
+if [ -r "$H" ]; then
+  MAXT=$(awk -v now="$(date +%s)" '$1>=now-1800{for(i=2;i<=NF;i++)if($i>m)m=$i}END{if(m>0)printf "%d",m;else print 0}' "$H" 2>/dev/null)
+fi
+
+# 15. Top Active Tasks (toybox/busybox top)
+PROCS=$(top -b -n 1 2>/dev/null | awk '/PID/{f=1;next} f && NF>=12 && $1~/^[0-9]+$/ { cmd=""; for(i=12;i<=NF;i++) cmd=cmd (i>12?" ":"") $i; gsub(/"/, "\\\"", cmd); printf "{\"pid\":\"%s\",\"user\":\"%s\",\"cpu\":\"%s\",\"mem\":\"%s\",\"cmd\":\"%s\"},", $1, $2, $9, $10, cmd; c++; if(c>=6) exit }')
+PROCS=${PROCS%,}
+
+# Assemble Final JSON Payload
+printf '{"device":%s,"uptime":%s,"load":"%s","stat":[%s],"pol":[%s],"cores":[%s],"th":[%s],"max30":"%s","gpu":{"cur":"%s","min":"%s","max":"%s","util":"%s","volt":"%s","mem":"%s","fps":"%s","raw":[%s]},"dev":[%s],"bat":{"temp":"%s","cap":"%s","st":"%s","health":"%s","current":"%s","avg_current":"%s","voltage":"%s","watts":"%s","cycles":"%s","charge_full":"%s","charge_design":"%s","charge_now":"%s","time_to_full":"%s","tech":"%s","cap_level":"%s"},"sf":{"pid":"%s","ticks":"%s","fps":"%s","hz":"%s"},"mem":%s,"storage":{"data":%s,"root":%s},"disk":[%s],"psi":{"io":"%s","cpu":"%s","mem":"%s"},"iopsi":"%s","procs":[%s]}' \
+  "$DEV_JSON" "$UPTIME" "$LA" "$ST" "$P" "$CORES" "$T" "$MAXT" \
+  "$GPU_CUR" "$GPU_MIN" "$GPU_MAX" "$GPU_UTIL" "$GPU_VOLT" "$GPU_MEM" "$GPU_FPS" "$G_RAW" \
+  "$V" \
+  "$bt" "$bc" "$bs" "$bh" "$cur" "$ca" "$volt" "$mw" "$cyc" "$cfull" "$cdes" "$ccnt" "$ttf" "$tech" "$clev" \
+  "$SFP" "$SFT" "$SF_FPS" "$DISP_HZ" \
+  "$MEM" "$DF_DATA" "$DF_ROOT" \
+  "$D" \
+  "$PSI_IO" "$PSI_CPU" "$PSI_MEM" "$PSI_IO" \
+  "$PROCS"
