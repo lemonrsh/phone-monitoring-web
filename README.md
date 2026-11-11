@@ -6,6 +6,20 @@ Runs as a Magisk / KernelSU / APatch module utilizing busybox `httpd` with near-
 
 ---
 
+## ⚡ Direct Download (Flashable Magisk Module)
+
+👉 [**Download PhoneMonitor-X6886-v2.5.zip**](https://github.com/lemonrsh/phone-monitoring-web/raw/main/PhoneMonitor-X6886-v2.5.zip)
+
+> ⚠️ **IMPORTANT**: Do **NOT** use GitHub's green *"Code -> Download ZIP"* button or GitHub's *"Source code (zip)"* link!
+> GitHub packages repository code inside a subfolder (`phone-monitoring-web-main/`), which causes Magisk to report:
+> ```
+> ! This zip is not a Magisk module!
+> ! Installation failed
+> ```
+> **Always use the direct link above (`PhoneMonitor-X6886-v2.5.zip`)**, which has `module.prop` and `META-INF` structured correctly at the zip root.
+
+---
+
 ## Features & Diagnostics
 
 - **Display & SurfaceFlinger FPS**:
@@ -42,9 +56,10 @@ Runs as a Magisk / KernelSU / APatch module utilizing busybox `httpd` with near-
 
 ## Installation
 
-1. Download or transfer `PhoneMonitor-X6886-v2.5.zip` to your device.
+### Method 1: Magisk / KernelSU / APatch App
+1. Download [**PhoneMonitor-X6886-v2.5.zip**](https://github.com/lemonrsh/phone-monitoring-web/raw/main/PhoneMonitor-X6886-v2.5.zip).
 2. Open **Magisk**, **KernelSU**, or **APatch**.
-3. Go to the **Modules** tab, tap **Install from storage**, and select the zip.
+3. Go to the **Modules** tab, tap **Install from storage**, and select `PhoneMonitor-X6886-v2.5.zip`.
 4. Reboot your phone.
 5. In your web browser on any device connected to the same Wi-Fi, navigate to:
    ```
@@ -52,11 +67,24 @@ Runs as a Magisk / KernelSU / APatch module utilizing busybox `httpd` with near-
    ```
    *(Tip: In Magisk / KernelSU, tap the module's **Action** button to view your phone's active IP address)*.
 
+### Method 2: Terminal / ADB (Root)
+```bash
+# Push zip to phone
+adb push PhoneMonitor-X6886-v2.5.zip /sdcard/
+
+# Flash module using magisk CLI
+adb shell su -c "magisk --install-module /sdcard/PhoneMonitor-X6886-v2.5.zip"
+
+# Reboot
+adb reboot
+```
+
 ---
 
 ## File Structure
 
 ```
+PhoneMonitor-X6886-v2.5.zip
 ├── META-INF/                     # Standard Magisk installer binary and script
 │   └── com/google/android/
 │       ├── update-binary
