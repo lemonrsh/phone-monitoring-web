@@ -4,6 +4,15 @@ rd() { R=""; [ -r "$1" ] && { read -r R < "$1"; } 2>/dev/null; }
 
 printf 'Content-Type: application/json\r\nCache-Control: no-store\r\nAccess-Control-Allow-Origin: *\r\n\r\n'
 
+CACHE_DIR=/data/local/tmp/phone_monitor
+NOW=$(date +%s)
+cache_fresh() {
+  [ -r "$1" ] || return 1
+  cache_time=$(stat -c %Y "$1" 2>/dev/null)
+  case "$cache_time" in ''|*[!0-9]*) return 1;; esac
+  [ "$cache_time" -le "$NOW" ] && [ "$((NOW - cache_time))" -lt "$2" ]
+}
+
 # 1. Device Info (cached for maximum performance)
 DEV_CACHE="/data/local/tmp/phone_monitor/device.json"
 DEV_JSON=""
@@ -185,18 +194,24 @@ SFT=0; [ -n "$SFP" ] && SFT=$(awk '{print $14+$15}' "/proc/$SFP/stat" 2>/dev/nul
 
 DISP_HZ=""
 SF_FPS=""
+SF_CACHE="$CACHE_DIR/surfaceflinger.cache"
+if cache_fresh "$SF_CACHE" 30; then
+  read -r DISP_HZ SF_FPS < "$SF_CACHE"
+else
+  if command -v dumpsys >/dev/null 2>&1; then
+    # SurfaceFlinger dumpsys is relatively expensive; refresh at most every 30 seconds.
+    HZ_RAW=$(dumpsys SurfaceFlinger --latency 2>/dev/null | head -n 1)
+    if [ -n "$HZ_RAW" ] && [ "$HZ_RAW" -gt 0 ] 2>/dev/null; then
+      DISP_HZ=$(awk -v ns="$HZ_RAW" 'BEGIN{if(ns>0) printf "%.0f", 1000000000/ns}')
+    fi
 
-if command -v dumpsys >/dev/null 2>&1; then
-  # Refresh period in nanoseconds (line 1 of SurfaceFlinger latency)
-  HZ_RAW=$(dumpsys SurfaceFlinger --latency 2>/dev/null | head -n 1)
-  if [ -n "$HZ_RAW" ] && [ "$HZ_RAW" -gt 0 ] 2>/dev/null; then
-    DISP_HZ=$(awk -v ns="$HZ_RAW" 'BEGIN{if(ns>0) printf "%.0f", 1000000000/ns}')
+    TOP_LAYER=$(dumpsys SurfaceFlinger --list 2>/dev/null | grep -E 'Task=|SurfaceView' | head -n 1)
+    if [ -n "$TOP_LAYER" ]; then
+      SF_FPS=$(dumpsys SurfaceFlinger --latency "$TOP_LAYER" 2>/dev/null | awk 'NR>1 && $2~/^[0-9]+$/ && $2>0 {a[++n]=$2} END {if(n>1 && a[n]>a[1]) printf "%.1f", (n-1)*1000000000/(a[n]-a[1])}')
+    fi
   fi
-
-  # Active layer latency FPS
-  TOP_LAYER=$(dumpsys SurfaceFlinger --list 2>/dev/null | grep -E 'Task=|SurfaceView' | head -n 1)
-  if [ -n "$TOP_LAYER" ]; then
-    SF_FPS=$(dumpsys SurfaceFlinger --latency "$TOP_LAYER" 2>/dev/null | awk 'NR>1 && $2~/^[0-9]+$/ && $2>0 {a[++n]=$2} END {if(n>1 && a[n]>a[1]) printf "%.1f", (n-1)*1000000000/(a[n]-a[1])}')
+  if [ -d "$CACHE_DIR" ]; then
+    printf '%s %s\n' "$DISP_HZ" "$SF_FPS" > "$SF_CACHE.$$" 2>/dev/null && mv "$SF_CACHE.$$" "$SF_CACHE" 2>/dev/null
   fi
 fi
 
@@ -260,12 +275,21 @@ PSI_MEM=""; [ -r /proc/pressure/memory ] && rd /proc/pressure/memory && PSI_MEM=
 MAXT=0
 H=/data/local/tmp/phone_monitor/temp30.log
 if [ -r "$H" ]; then
-  MAXT=$(awk -v now="$(date +%s)" '$1>=now-1800{for(i=2;i<=NF;i++)if($i>m)m=$i}END{if(m>0)printf "%d",m;else print 0}' "$H" 2>/dev/null)
+  MAXT=$(awk -v now="$NOW" '$1>=now-1800{for(i=2;i<=NF;i++)if($i>m)m=$i}END{if(m>0)printf "%d",m;else print 0}' "$H" 2>/dev/null)
 fi
 
-# 15. Top Active Tasks (toybox/busybox top)
-PROCS=$(top -b -n 1 2>/dev/null | awk '/PID/{f=1;next} f && NF>=12 && $1~/^[0-9]+$/ { cmd=""; for(i=12;i<=NF;i++) cmd=cmd (i>12?" ":"") $i; gsub(/"/, "\\\"", cmd); printf "{\"pid\":\"%s\",\"user\":\"%s\",\"cpu\":\"%s\",\"mem\":\"%s\",\"cmd\":\"%s\"},", $1, $2, $9, $10, cmd; c++; if(c>=6) exit }')
-PROCS=${PROCS%,}
+# 15. Top Active Tasks (toybox/busybox top), cached to avoid spawning top per request.
+PROC_CACHE="$CACHE_DIR/top.cache"
+if cache_fresh "$PROC_CACHE" 30; then
+  rd "$PROC_CACHE"
+  PROCS=$R
+else
+  PROCS=$(top -b -n 1 2>/dev/null | awk '/PID/{f=1;next} f && NF>=12 && $1~/^[0-9]+$/ { cmd=""; for(i=12;i<=NF;i++) cmd=cmd (i>12?" ":"") $i; gsub(/"/, "\\\"", cmd); printf "{\"pid\":\"%s\",\"user\":\"%s\",\"cpu\":\"%s\",\"mem\":\"%s\",\"cmd\":\"%s\"},", $1, $2, $9, $10, cmd; c++; if(c>=6) exit }')
+  PROCS=${PROCS%,}
+  if [ -d "$CACHE_DIR" ]; then
+    printf '%s\n' "$PROCS" > "$PROC_CACHE.$$" 2>/dev/null && mv "$PROC_CACHE.$$" "$PROC_CACHE" 2>/dev/null
+  fi
+fi
 
 # Assemble Final JSON Payload
 printf '{"device":%s,"uptime":%s,"load":"%s","stat":[%s],"pol":[%s],"cores":[%s],"th":[%s],"max30":"%s","gpu":{"cur":"%s","min":"%s","max":"%s","util":"%s","volt":"%s","mem":"%s","fps":"%s","raw":[%s]},"dev":[%s],"bat":{"temp":"%s","cap":"%s","st":"%s","health":"%s","current":"%s","avg_current":"%s","voltage":"%s","watts":"%s","cycles":"%s","charge_full":"%s","charge_design":"%s","charge_now":"%s","time_to_full":"%s","tech":"%s","cap_level":"%s"},"sf":{"pid":"%s","ticks":"%s","fps":"%s","hz":"%s"},"mem":%s,"storage":{"data":%s,"root":%s},"disk":[%s],"psi":{"io":"%s","cpu":"%s","mem":"%s"},"iopsi":"%s","procs":[%s]}' \

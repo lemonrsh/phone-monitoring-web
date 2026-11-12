@@ -6,6 +6,7 @@ X6886_full_diagnostics.txt
 # Release packages (allow flashable module zip)
 *.zip
 !PhoneMonitor-X6886-v2.5.zip
+!PhoneMonitor-X6886-v2.6.zip
 *.tar.gz
 
 # Temporary files

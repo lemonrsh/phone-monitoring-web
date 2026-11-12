@@ -374,9 +374,10 @@ footer{
     </div>
     <div class="controls">
       <select id="sel-interval" title="Polling Interval">
-        <option value="1000">1s update</option>
-        <option value="2000" selected>2s update</option>
-        <option value="5000">5s update</option>
+        <option value="5000">5s · Fast</option>
+        <option value="15000">15s · Balanced</option>
+        <option value="30000" selected>30s · Low CPU</option>
+        <option value="60000">60s · Minimum CPU</option>
         <option value="pause">Pause</option>
       </select>
       <button id="btn-refresh" title="Force Refresh Now">
@@ -807,12 +808,17 @@ function normTemp(v){
 let prevStat = null;
 let prevSF = null;
 let prevDisk = {};
-let pollingInterval = 2000;
+let lastStatsAt = 0;
+let pollingInterval = 30000;
 let pollTimer = null;
+let fetchInFlight = false;
 
 // RENDER FUNCTION
 function renderDashboard(data){
   if(!data) return;
+  const sampleNow = Date.now();
+  const sampleSeconds = lastStatsAt ? Math.max(1, (sampleNow - lastStatsAt) / 1000) : Math.max(1, Number(pollingInterval) / 1000 || 30);
+  lastStatsAt = sampleNow;
 
   // 1. HEADER & DEVICE INFO
   if(data.device){
@@ -1063,8 +1069,8 @@ function renderDashboard(data){
   let totR = 0, totW = 0;
   diskList.forEach(dk => {
     let prev = prevDisk[dk.n] || { r: N(dk.r), w: N(dk.w) };
-    let dr = Math.max(0, N(dk.r) - prev.r) * 512 / 1048576 / (pollingInterval/1000);
-    let dw = Math.max(0, N(dk.w) - prev.w) * 512 / 1048576 / (pollingInterval/1000);
+    let dr = Math.max(0, N(dk.r) - prev.r) * 512 / 1048576 / sampleSeconds;
+    let dw = Math.max(0, N(dk.w) - prev.w) * 512 / 1048576 / sampleSeconds;
     totR += dr; totW += dw;
     prevDisk[dk.n] = { r: N(dk.r), w: N(dk.w) };
   });
@@ -1139,8 +1145,10 @@ function renderDashboard(data){
 
 // FETCH TICK
 async function fetchStats(){
+  if(fetchInFlight || document.hidden) return;
+  fetchInFlight = true;
   try{
-    let res = await fetch('/cgi-bin/stats?' + Date.now(), { cache: 'no-store' });
+    let res = await fetch('/cgi-bin/stats', { cache: 'no-store' });
     if(!res.ok) throw new Error('HTTP ' + res.status);
     let data = await res.json();
     renderDashboard(data);
@@ -1149,16 +1157,29 @@ async function fetchStats(){
     let stPill = $('status-pill');
     stPill.className = 'status-pill offline';
     $('status-text').textContent = '● OFFLINE / RECONNECTING';
+  } finally {
+    fetchInFlight = false;
   }
 }
 
-// POLLING LOOP
+// Poll at a restrained cadence, never overlap requests, and stop completely in hidden tabs.
 function startLoop(){
   if(pollTimer) clearInterval(pollTimer);
-  if(pollingInterval !== 'pause'){
+  pollTimer = null;
+  if(pollingInterval !== 'pause' && !document.hidden){
     pollTimer = setInterval(fetchStats, Number(pollingInterval));
   }
 }
+
+document.addEventListener('visibilitychange', () => {
+  if(document.hidden){
+    if(pollTimer) clearInterval(pollTimer);
+    pollTimer = null;
+  } else if(pollingInterval !== 'pause'){
+    fetchStats();
+    startLoop();
+  }
+});
 
 $('sel-interval').addEventListener('change', e => {
   let val = e.target.value;
