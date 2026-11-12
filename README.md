@@ -1,14 +1,14 @@
 # Phone Monitor Web · Infinix X6886
 
-A lightweight, real-time hardware telemetry dashboard for **Infinix GT / Note (X6886 · MediaTek MT6789)** and modern Android devices running Android 12 - 17+ (AOSP / GSI / Stock).
+A low-overhead hardware telemetry dashboard for **Infinix GT / Note (X6886 · MediaTek MT6789)** and modern Android devices running Android 12 - 17+ (AOSP / GSI / Stock).
 
-Runs as a Magisk / KernelSU / APatch module utilizing busybox `httpd` with near-zero overhead (<0.1% CPU). Access the live web dashboard from any PC, tablet, or phone on your local network at `http://<phone-ip>:8088`.
+Runs as a Magisk / KernelSU / APatch module using busybox `httpd`. Dashboard polling defaults to every 30 seconds (with 60-second and pause options), stops while its browser tab is hidden, and caches heavier task and SurfaceFlinger queries. Open it from any device on your local network at `http://<phone-ip>:8088`.
 
 ---
 
 ## ⚡ Direct Download (Flashable Magisk Module)
 
-👉 [**Download PhoneMonitor-X6886-v2.5.zip**](https://github.com/lemonrsh/phone-monitoring-web/raw/main/PhoneMonitor-X6886-v2.5.zip)
+👉 [**Download PhoneMonitor-X6886-v2.6.zip**](https://github.com/lemonrsh/phone-monitoring-web/raw/main/PhoneMonitor-X6886-v2.6.zip)
 
 > ⚠️ **IMPORTANT**: Do **NOT** use GitHub's green *"Code -> Download ZIP"* button or GitHub's *"Source code (zip)"* link!
 > GitHub packages repository code inside a subfolder (`phone-monitoring-web-main/`), which causes Magisk to report:
@@ -16,7 +16,7 @@ Runs as a Magisk / KernelSU / APatch module utilizing busybox `httpd` with near-
 > ! This zip is not a Magisk module!
 > ! Installation failed
 > ```
-> **Always use the direct link above (`PhoneMonitor-X6886-v2.5.zip`)**, which has `module.prop` and `META-INF` structured correctly at the zip root.
+> **Always use the direct link above (`PhoneMonitor-X6886-v2.6.zip`)**, which has `module.prop` and `META-INF` structured correctly at the zip root.
 
 ---
 
@@ -46,7 +46,7 @@ Runs as a Magisk / KernelSU / APatch module utilizing busybox `httpd` with near-
 - **Comprehensive Thermal Matrix**:
   - Heat sensor matrix mapping all device thermal zones (CPU, GPU, battery, PMIC, charger, board skin).
   - Color-coded temperature tags with peak thermal zone indicator and rolling 30-minute peak history.
-- **Live Task Manager**:
+- **Task Manager (sampled every 30 seconds)**:
   - Top active processes with PID, command name, CPU%, and memory% allocation.
 - **Modern Cyber Aesthetic**:
   - Self-contained, responsive glassmorphism dark UI with embedded vector SVG icons.
@@ -57,9 +57,9 @@ Runs as a Magisk / KernelSU / APatch module utilizing busybox `httpd` with near-
 ## Installation
 
 ### Method 1: Magisk / KernelSU / APatch App
-1. Download [**PhoneMonitor-X6886-v2.5.zip**](https://github.com/lemonrsh/phone-monitoring-web/raw/main/PhoneMonitor-X6886-v2.5.zip).
+1. Download [**PhoneMonitor-X6886-v2.6.zip**](https://github.com/lemonrsh/phone-monitoring-web/raw/main/PhoneMonitor-X6886-v2.6.zip).
 2. Open **Magisk**, **KernelSU**, or **APatch**.
-3. Go to the **Modules** tab, tap **Install from storage**, and select `PhoneMonitor-X6886-v2.5.zip`.
+3. Go to the **Modules** tab, tap **Install from storage**, and select `PhoneMonitor-X6886-v2.6.zip`.
 4. Reboot your phone.
 5. In your web browser on any device connected to the same Wi-Fi, navigate to:
    ```
@@ -70,10 +70,10 @@ Runs as a Magisk / KernelSU / APatch module utilizing busybox `httpd` with near-
 ### Method 2: Terminal / ADB (Root)
 ```bash
 # Push zip to phone
-adb push PhoneMonitor-X6886-v2.5.zip /sdcard/
+adb push PhoneMonitor-X6886-v2.6.zip /sdcard/
 
 # Flash module using magisk CLI
-adb shell su -c "magisk --install-module /sdcard/PhoneMonitor-X6886-v2.5.zip"
+adb shell su -c "magisk --install-module /sdcard/PhoneMonitor-X6886-v2.6.zip"
 
 # Reboot
 adb reboot
@@ -84,7 +84,7 @@ adb reboot
 ## File Structure
 
 ```
-PhoneMonitor-X6886-v2.5.zip
+PhoneMonitor-X6886-v2.6.zip
 ├── META-INF/                     # Standard Magisk installer binary and script
 │   └── com/google/android/
 │       ├── update-binary

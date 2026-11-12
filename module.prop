@@ -1,6 +1,6 @@
 id=phone_monitor
 name=Phone Monitor Web - Infinix X6886
-version=v2.5
-versionCode=25
+version=v2.6
+versionCode=26
 author=lemonrsh
-description=Real-time web diagnostics & hardware monitor for Infinix X6886 (MediaTek MT6789) - CPU octa-core load, Mali GPU, 120Hz FPS, thermals, battery power draw, RAM, storage, disk I/O and tasks.
+description=Low-overhead web diagnostics & hardware monitor for Infinix X6886 (MediaTek MT6789) - CPU octa-core load, Mali GPU, 120Hz FPS, thermals, battery power draw, RAM, storage, disk I/O and tasks.
